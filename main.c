@@ -454,6 +454,33 @@ void RequireMarkdownReparse(const char* fileName) {
     needsParseFileName = fileName;
 }
 
+// ! extremely hacky way to workaround clay/raylib text measurement issues
+// ! it just works, though does not look fine
+char* InjectSpaces(const char* input) {
+    size_t len = strlen(input);
+    char* out = malloc(len * 2 + 1);
+    size_t out_idx = 0;
+    for (size_t i = 0; i < len;) {
+        int char_len = 0;
+        unsigned char c = (unsigned char) input[i];
+        if (c < 0x80) char_len = 1;
+        else if (c < 0xE0)
+            char_len = 2;
+        else if (c < 0xF0)
+            char_len = 3;
+        else
+            char_len = 4;
+
+        for (int j = 0; j < char_len; j++) out[out_idx++] = input[i++];
+
+        if (char_len >= 3) {
+            out[out_idx++] = ' ';
+        }
+    }
+    out[out_idx] = '\0';
+    return out;
+}
+
 void ReparseIfRequested() {
     if (needsParse) {
         printf("Reparsing markdown requested\n");
@@ -470,13 +497,16 @@ void ReparseIfRequested() {
             return;
         }
 
+        char* spacedMarkdown = InjectSpaces(markdown);
+        free(markdown);
+
         if (globalRenderCommandCache) {
             free(globalRenderCommandCache);
         }
-        globalRenderCommandCache = ParseMarkdownToCommands(markdown, &needsParse);
+        globalRenderCommandCache = ParseMarkdownToCommands(spacedMarkdown, &needsParse);
         globalRenderCommandCount = needsParse;
 
-        free(markdown);
+        free(spacedMarkdown);
         needsParse = 0;
     }
 }
