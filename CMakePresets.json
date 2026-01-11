@@ -1,0 +1,22 @@
+{
+  "version": 4,
+  "configurePresets": [
+    {
+      "name": "emscripten-wasm",
+      "displayName": "Emscripten WebAssembly Build",
+      "description": "Configures the project using the Emscripten toolchain.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/emscripten",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "E:\\Sdk\\emscripten\\emsdk\\upstream\\emscripten\\cmake\\Modules\\Platform\\Emscripten.cmake",
+        "CMAKE_CROSSCOMPILING_EMULATOR": "E:/Sdk/emscripten/emsdk/node/22.16.0_64bit/bin/node.exe",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "emcc.bat",
+        "CMAKE_CXX_COMPILER": "em++.bat",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "BUILD_SHARED_LIBS": "OFF"
+      },
+      "toolchainFile": "E:\\Sdk\\emscripten\\emsdk\\upstream\\emscripten\\cmake\\Modules\\Platform\\Emscripten.cmake"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+[submodule "vendors/clay"]
+	path = vendors/clay
+	url = https://github.com/nicbarker/clay.git
+[submodule "vendors/cmark"]
+	path = vendors/cmark
+	url = https://github.com/commonmark/cmark.git
+[submodule "vendors/raylib"]
+	path = vendors/raylib
+	url = https://github.com/raysan5/raylib.git
