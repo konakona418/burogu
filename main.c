@@ -511,7 +511,8 @@ void MarkdownRenderer(RenderCommand* commands, int commandCount) {
                     decl.border = (Clay_BorderElementConfig){.width = CLAY_BORDER_ALL(1), .color = {60, 60, 60, 255}};
                 } else if (cmd->blockType == BT_PARAGRAPH) {
                     decl.layout.sizing.width = CLAY_SIZING_GROW();
-                    decl.layout.layoutDirection = CLAY_LEFT_TO_RIGHT;
+                    // todo: fixme: word wrap not working properly, especially when multiple styles in one paragraph
+                    decl.layout.layoutDirection = CLAY_TOP_TO_BOTTOM;
                     decl.layout.childGap = 0;
                 } else if (cmd->blockType == BT_LIST_CONTAINER) {
                     decl.layout.padding = (Clay_Padding){24, 0, 0, 0};
