@@ -10,7 +10,7 @@ add_subdirectory(vendors/raylib)
 
 if (EMSCRIPTEN)
     message(STATUS "Configuring for Emscripten/WebAssembly target")
-    set(CMAKE_EXECUTABLE_SUFFIX ".html")
+    set(CMAKE_EXECUTABLE_SUFFIX ".js")
 endif()
 
 add_executable(burogu main.c clay_impl.c font_loader.c)

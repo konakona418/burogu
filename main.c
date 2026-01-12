@@ -770,7 +770,7 @@ int main() {
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     Clay_Initialize(arena, (Clay_Dimensions){800, 600}, (Clay_ErrorHandler){HandleError});
-    Clay_Raylib_Initialize(800, 600, "test", 0);
+    Clay_Raylib_Initialize(800, 600, "Burogu", 0);
 
     LoadEmbeddedResources();
 
