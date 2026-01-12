@@ -1,37 +1,12 @@
 import os
 
-def generate_archives_header(input_dir, output_header):
-    entries = []
-
+def generate_index(input_dir, output_file):
     files = sorted([f for f in os.listdir(input_dir) if f.endswith('.md')])
-    
-    for filename in files:
-        if filename == "_main.md":
-            continue
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write("Main Page,_main.md\n")
+        for filename in files:
+            if filename == "_main.md": continue
+            display_name = os.path.splitext(filename)[0].replace('_', ' ').title()
+            f.write(f"{display_name},{filename}\n")
 
-        display_name = os.path.splitext(filename)[0].replace('_', ' ').title()
-
-        entry = f'    {{.name = CLAY_STRING("{display_name}"), .path = CLAY_STRING("{filename}"), .active = FALSE}}'
-        entries.append(entry)
-
-    macro_content = "#ifndef ARCHIVES_H\n#define ARCHIVES_H\n\n"
-    macro_content += "#define ARCHIVE_ENTRIES \\\n"
-    macro_content += ", \\\n".join(entries)
-    macro_content += "\n\n#endif"
-
-    try:
-        with open(output_header, 'w', encoding='utf-8') as f:
-            f.write(macro_content)
-        print(f"Successfully generated C macro file: {output_header}")
-        print(f"Total indexed articles: {len(entries)}")
-    except Exception as e:
-        print(f"Generation failed: {e}")
-
-if __name__ == "__main__":
-    markdown_dir = "markdown/"
-    header_path = "archives.h"
-    
-    if os.path.exists(markdown_dir):
-        generate_archives_header(markdown_dir, header_path)
-    else:
-        print(f"Directory not found: {markdown_dir}")
+generate_index("markdown/", "markdown/archives.txt")

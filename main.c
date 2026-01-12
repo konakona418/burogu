@@ -9,7 +9,6 @@
 #include <cmark.h>
 
 #include "font_loader.h"
-#include "glyph_range.h"
 #include "renderer.c"
 #include "util.h"
 
@@ -30,6 +29,7 @@ const FontSizes fontSizes = {
         .body = 18.0f,
         .small = 14.0f,
 };
+#define MARKDOWN_BASE_PATH "markdown/"
 
 #define FONT_NAME_NORMAL "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', sans-serif"
 #define FONT_NAME_MONOSPACE "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace"
@@ -60,54 +60,6 @@ double GetDevicePixelRatio() {
 #else
     return GetDevicePixelRatio();
 #endif
-}
-
-#define TEXT_ARENA_SIZE 1024 * 1024
-char textArenaMemory[TEXT_ARENA_SIZE];
-int textArenaOffset = 0;
-
-Clay_String AllocateStringInArena(const char* str) {
-    if (!str) {
-        return (Clay_String){0};
-    }
-
-    if (textArenaOffset + strlen(str) + 1 > TEXT_ARENA_SIZE) {
-        printf("Text arena out of memory!\n");
-        return (Clay_String){0};
-    }
-
-    char* dest = &textArenaMemory[textArenaOffset];
-    strcpy(dest, str);
-    textArenaOffset += strlen(str) + 1;
-
-    return (Clay_String){.chars = dest, .length = (int) strlen(str)};
-}
-
-void ResetTextArena() {
-    textArenaOffset = 0;
-}
-
-char* ReadMarkdown(const char* path) {
-    char fullPath[256];
-    snprintf(fullPath, sizeof(fullPath), MARKDOWN_BASE_PATH "%s", path);
-
-    FILE* file = fopen(fullPath, "rb");
-    if (!file) {
-        printf("Failed to open markdown file: %s\n", fullPath);
-        return NULL;
-    }
-
-    fseek(file, 0, SEEK_END);
-    long fileSize = ftell(file);
-    fseek(file, 0, SEEK_SET);
-
-    char* buffer = (char*) malloc(fileSize + 1);
-    fread(buffer, 1, fileSize, file);
-    buffer[fileSize] = '\0';
-
-    fclose(file);
-
-    return buffer;
 }
 
 typedef struct {
@@ -150,6 +102,163 @@ typedef struct {
     Clay_TextElementConfig config;
     TextState state;
 } StyleFrame;
+
+
+#define TEXT_ARENA_SIZE 1024 * 1024
+char textArenaMemory[TEXT_ARENA_SIZE];
+int textArenaOffset = 0;
+
+RenderCommand* globalRenderCommandCache;
+int globalRenderCommandCount;
+int needsParse = 1;
+char* needsParseFileContent;
+
+#define MAX_ARCHIVES 128
+
+typedef struct {
+    Clay_String name;
+    Clay_String path;
+    bool active;
+} ArchiveEntry;
+
+ArchiveEntry archives[MAX_ARCHIVES];
+int archiveCount = 0;
+
+Clay_String AllocateStringInArena(const char* str) {
+    if (!str) {
+        return (Clay_String){0};
+    }
+
+    if (textArenaOffset + strlen(str) + 1 > TEXT_ARENA_SIZE) {
+        printf("Text arena out of memory!\n");
+        return (Clay_String){0};
+    }
+
+    char* dest = &textArenaMemory[textArenaOffset];
+    strcpy(dest, str);
+    textArenaOffset += strlen(str) + 1;
+
+    return (Clay_String){.chars = dest, .length = (int) strlen(str)};
+}
+
+void ResetTextArena() {
+    textArenaOffset = 0;
+}
+
+/* clang-format off */
+void RequestMarkdownLoadJS(const char* fileName) {
+    EM_ASM({
+        try {
+            const filename = UTF8ToString($0);
+            fetch(`markdown/${filename}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.text();
+                })
+                .then(text => {
+                    const processed = Module.Burogu_Preprocess(text);
+                    const ptr = lengthBytesUTF8(processed) + 1;
+                    const stringOnWasmHeap = _malloc(ptr);
+                    stringToUTF8(processed, stringOnWasmHeap, ptr);
+
+                    console.log(`Loaded markdown file: ${filename}, size: ${text.length} bytes`);
+                    Module._OnFileLoaded(filename, stringOnWasmHeap);
+
+                    _free(stringOnWasmHeap);
+                })
+                .catch(e => {
+                    console.error("Failed to load markdown:", e);
+                });
+        } catch (e) {
+            console.error("Failed to load markdown:", e);
+        }
+    }, fileName);
+}
+
+void RequestArchiveLoadJS() {
+    EM_ASM({
+        fetch('markdown/archives.txt')
+            .then(response => response.text())
+            .then(text => {
+                const lines = text.split('\n');
+                lines.forEach(line => {
+                    const trimmed = line.trim();
+                    if (!trimmed || trimmed.startsWith('#')) return;
+
+                    const parts = trimmed.split(',');
+                    if (parts.length >= 2) {
+                        const name = parts[0].trim();
+                        const path = parts[1].trim();
+
+                        const namePtr = Module.Burogu_SafeAllocateUTF8(name);
+                        const pathPtr = Module.Burogu_SafeAllocateUTF8(path);
+                        Module._AddArchiveEntry(namePtr, pathPtr);
+                        _free(namePtr);
+                        _free(pathPtr);
+                    }
+                });
+            })
+            .catch(err => console.error("Burogu Index Load Error:", err));
+    });
+}
+/* clang-format on */
+
+EMSCRIPTEN_KEEPALIVE
+void OnFileLoaded(const char* fileName, const char* content) {
+    printf("File loaded: %s\n", fileName);
+    if (content) {
+        printf("Content length: %zu\n", strlen(content));
+        needsParseFileContent = strdup(content);
+    } else {
+        printf("Failed to load file: %s\n", fileName);
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void AddArchiveEntry(char* name, char* path) {
+    if (archiveCount >= MAX_ARCHIVES) {
+        printf("Error: Maximum number of archives reached!\n");
+        return;
+    }
+
+    archives[archiveCount].name = (Clay_String){
+            .length = strlen(name),
+            .chars = strdup(name),
+    };
+    archives[archiveCount].path = (Clay_String){
+            .length = strlen(path),
+            .chars = strdup(path),
+    };
+    archives[archiveCount].active = (archiveCount == 0);
+
+    archiveCount++;
+
+    printf("Added archive entry: %s -> %s\n", name, path);
+}
+
+#define GLYPH_RANGE_FILE MARKDOWN_BASE_PATH "glyph_range.txt"
+
+char* ReadGlyphRange() {
+    FILE* file = fopen(GLYPH_RANGE_FILE, "rb");
+    if (!file) {
+        printf("Failed to open glyph range file: %s\n", GLYPH_RANGE_FILE);
+        return NULL;
+    }
+
+    fseek(file, 0, SEEK_END);
+    long fileSize = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    char* buffer = (char*) malloc(fileSize + 1);
+    fread(buffer, 1, fileSize, file);
+    buffer[fileSize] = '\0';
+
+    fclose(file);
+
+    return buffer;
+}
 
 Bool IsBlockPopStyleStackRequired(cmark_node_type type) {
     return type == CMARK_NODE_HEADING || type == CMARK_NODE_BLOCK_QUOTE ||
@@ -402,6 +511,8 @@ void MarkdownRenderer(RenderCommand* commands, int commandCount) {
                     decl.border = (Clay_BorderElementConfig){.width = CLAY_BORDER_ALL(1), .color = {60, 60, 60, 255}};
                 } else if (cmd->blockType == BT_PARAGRAPH) {
                     decl.layout.sizing.width = CLAY_SIZING_GROW();
+                    decl.layout.layoutDirection = CLAY_LEFT_TO_RIGHT;
+                    decl.layout.childGap = 0;
                 } else if (cmd->blockType == BT_LIST_CONTAINER) {
                     decl.layout.padding = (Clay_Padding){24, 0, 0, 0};
                     decl.layout.layoutDirection = CLAY_TOP_TO_BOTTOM;
@@ -444,85 +555,35 @@ void MarkdownRenderer(RenderCommand* commands, int commandCount) {
     }
 }
 
-RenderCommand* globalRenderCommandCache;
-int globalRenderCommandCount;
-int needsParse = 1;
-const char* needsParseFileName;
-
 void RequireMarkdownReparse(const char* fileName) {
     needsParse = 1;
-    needsParseFileName = fileName;
-}
-
-// ! extremely hacky way to workaround clay/raylib text measurement issues
-// ! it just works, though does not look fine
-char* InjectSpaces(const char* input) {
-    size_t len = strlen(input);
-    char* out = malloc(len * 2 + 1);
-    size_t out_idx = 0;
-    for (size_t i = 0; i < len;) {
-        int char_len = 0;
-        unsigned char c = (unsigned char) input[i];
-        if (c < 0x80) char_len = 1;
-        else if (c < 0xE0)
-            char_len = 2;
-        else if (c < 0xF0)
-            char_len = 3;
-        else
-            char_len = 4;
-
-        for (int j = 0; j < char_len; j++) out[out_idx++] = input[i++];
-
-        if (char_len >= 3) {
-            out[out_idx++] = ' ';
-        }
-    }
-    out[out_idx] = '\0';
-    return out;
+    RequestMarkdownLoadJS(fileName);
 }
 
 void ReparseIfRequested() {
-    if (needsParse) {
-        printf("Reparsing markdown requested\n");
-
-        ResetTextArena();
-
-        if (needsParseFileName == NULL) {
-            needsParseFileName = "_main.md";
-        }
-
-        char* markdown = ReadMarkdown(needsParseFileName);
-        if (!markdown) {
-            printf("Failed to read markdown file for reparsing\n");
-            return;
-        }
-
-        char* spacedMarkdown = InjectSpaces(markdown);
-        free(markdown);
-
-        if (globalRenderCommandCache) {
-            free(globalRenderCommandCache);
-        }
-        globalRenderCommandCache = ParseMarkdownToCommands(spacedMarkdown, &needsParse);
-        globalRenderCommandCount = needsParse;
-
-        free(spacedMarkdown);
-        needsParse = 0;
+    if (!needsParse) {
+        return;
     }
+
+    ResetTextArena();
+
+    if (needsParseFileContent == NULL) {
+        return;
+    }
+
+    if (globalRenderCommandCache) {
+        free(globalRenderCommandCache);
+    }
+
+    globalRenderCommandCache = ParseMarkdownToCommands(needsParseFileContent, &needsParse);
+    globalRenderCommandCount = needsParse;
+
+    needsParse = 0;
+    free(needsParseFileContent);
+    needsParseFileContent = NULL;
+
+    printf("Markdown reparsed\n");
 }
-
-typedef struct {
-    Clay_String name;
-    Clay_String path;
-    Bool active;
-} ArchiveEntry;
-
-#include "archives.h"
-ArchiveEntry archives[] = {
-        {.name = CLAY_STRING("Main Page"), .path = CLAY_STRING("_main.md"), .active = TRUE},
-        ARCHIVE_ENTRIES,
-};
-int archiveCount = sizeof(archives) / sizeof(ArchiveEntry);
 
 void HandleArchiveListItemClick(Clay_ElementId elementId, Clay_PointerData pointerInfo, intptr_t userData) {
     if (pointerInfo.state != CLAY_POINTER_DATA_PRESSED_THIS_FRAME) {
@@ -596,7 +657,31 @@ void MainContainer() {
             .backgroundColor = {255, 255, 255, 255},
     }) {
         SideBar();
-        MarkdownRenderer(globalRenderCommandCache, globalRenderCommandCount);
+
+        if (needsParse && !needsParseFileContent) {
+            CLAY({
+                    .id = CLAY_ID("LoadingContainer"),
+                    .layout = {
+                            .sizing = {
+                                    CLAY_SIZING_GROW(),
+                                    CLAY_SIZING_GROW(),
+                            },
+                            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                            .padding = CLAY_PADDING_ALL(32),
+                            .childGap = 16,
+                            .childAlignment = CLAY_ALIGN_X_CENTER,
+                    },
+            }) {
+                CLAY_TEXT(CLAY_STRING("Loading..."),
+                          CLAY_TEXT_CONFIG({
+                                  .fontId = ZHCN_FONT_BIG,
+                                  .fontSize = 24,
+                                  .textColor = {36, 41, 46, 255},
+                          }));
+            }
+        } else {
+            MarkdownRenderer(globalRenderCommandCache, globalRenderCommandCount);
+        }
     }
 }
 
@@ -685,9 +770,13 @@ int main() {
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     Clay_Initialize(arena, (Clay_Dimensions){800, 600}, (Clay_ErrorHandler){HandleError});
     Clay_Raylib_Initialize(800, 600, "test", 0);
+
     LoadEmbeddedResources();
 
     Clay_SetMeasureTextFunction(Raylib_MeasureText, embeddedFonts);
+
+    RequestArchiveLoadJS();
+    RequireMarkdownReparse("_main.md");
 
 #ifdef EMSCRIPTEN
     emscripten_set_main_loop(MainLoop, 0, 1);

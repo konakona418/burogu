@@ -22,8 +22,9 @@ target_link_options(burogu PRIVATE
     "-sALLOW_MEMORY_GROWTH=1"
     "-sINITIAL_MEMORY=67108864"
     "-sASSERTIONS=2"
-    "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free']"
-    "-sEXPORTED_RUNTIME_METHODS=['UTF8ToString']"
-    "--preload-file=${CMAKE_SOURCE_DIR}/markdown@/markdown"
+    "-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_OnFileLoaded,_AddArchiveEntry"
+    "-sEXPORTED_RUNTIME_METHODS=UTF8ToString,callMain,FS"
+    "-sINVOKE_RUN=0"#prevent auto-run to allow for pre-js setup
+    "--pre-js" "${CMAKE_SOURCE_DIR}/preload.js"
 )
 endif()
